@@ -458,8 +458,20 @@ class ProjectExporter(BaseWorkspaceInteractor):
                     owner_info = project.get("owner", {})
                     creator_info = project.get("creator", {})
                     
-                    # V2 API uses project name as slug (V1 had slug_raw field but V2 doesn't)
-                    project_slug = project.get("slug") or project.get("slug_raw") or self.project_name
+                    # Try to get slug from V2 API (newer CML versions have explicit slug field)
+                    project_slug = project.get("slug")
+
+                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                    if not project_slug:
+                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                        project_slug = self._get_project_slug_from_v1()
+
+                    # Last resort: use project id (might work in some CML versions) or project name
+                    if not project_slug:
+                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                        project_slug = self.project_name.lower()
+
+                    logging.debug(f"Found project: name='{self.project_name}', slug='{project_slug}', id='{project.get('id')}'")
                     
                     if owner_info.get("type") == constants.ORGANIZATION_TYPE:
                         return (
@@ -474,6 +486,44 @@ class ProjectExporter(BaseWorkspaceInteractor):
                             constants.USER_TYPE,
                         )
         return None, None, None
+
+    def _get_project_slug_from_v1(self):
+        """
+        Get project slug using V1 API projects-summary endpoint.
+
+        Returns:
+            str: Project slug or None if not found
+
+        Side Effects:
+            - Calls V1 API projects-summary endpoint
+            - Logs debug information
+        """
+        try:
+            endpoint = Template(ApiV1Endpoints.PROJECTS_SUMMARY.value).substitute(
+                username=self.username,
+                projectName=self.project_name,
+                limit=100,
+                offset=0
+            )
+            response = call_api_v1(
+                host=self.host,
+                endpoint=endpoint,
+                method="GET",
+                api_key=self.api_key,
+                ca_path=self.ca_path,
+            )
+            projects = response.json()
+
+            for project in projects:
+                if project.get("name") == self.project_name:
+                    slug = project.get("slug_raw")
+                    if slug:
+                        logging.debug(f"Found slug from V1 API: {slug}")
+                        return slug
+        except Exception as e:
+            logging.debug(f"V1 API fallback failed: {e}")
+
+        return None
 
     # Get all models list info using API v2
     def get_models_listv2(self, project_id: str):
@@ -1263,8 +1313,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
             for project in project_list:
                 if project["name"] == self.project_name:
                     creator_info = project.get("creator", {})
-                    # V2 API uses project name as slug (V1 had slug_raw field but V2 doesn't)
-                    project_slug = project.get("slug") or project.get("slug_raw") or self.project_name
+                    # Try to get slug from V2 API first (slug or slug_raw fields)
+                    project_slug = project.get("slug")
+
+                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                    if not project_slug:
+                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                        project_slug = self._get_project_slug_from_v1()
+
+                    # Last resort: use project Name
+                    if not project_slug:
+                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                        project_slug = self.project_name.lower()
+
+                    logging.debug(f"Found project: name='{self.project_name}', slug='{project_slug}'")
                     return creator_info.get("username"), project_slug
         
         # Enhanced search: List all accessible projects (including team/shared projects)
@@ -1285,12 +1347,63 @@ class ProjectImporter(BaseWorkspaceInteractor):
                 if project["name"].lower() == self.project_name.lower():
                     logging.info(f"Found project {self.project_name} in accessible projects (team/shared)")
                     creator_info = project.get("creator", {})
-                    project_slug = project.get("slug") or project.get("slug_raw") or self.project_name
+                    # Try to get slug from V2 API first (slug field)
+                    project_slug = project.get("slug")
+
+                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                    if not project_slug:
+                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                        project_slug = self._get_project_slug_from_v1()
+
+                    # Last resort: use project Name
+                    if not project_slug:
+                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project name")
+                        project_slug = self.project_name.lower()
+
+                    logging.debug(f"Found project: name='{self.project_name}', slug='{project_slug}'")
                     return creator_info.get("username"), project_slug
         except Exception as e:
             logging.warning(f"Could not search all accessible projects: {e}")
         
         return None, None
+
+    def _get_project_slug_from_v1(self):
+        """
+        Get project slug using V1 API projects-summary endpoint.
+
+        Returns:
+            str: Project slug or None if not found
+
+        Side Effects:
+            - Calls V1 API projects-summary endpoint
+            - Logs debug information
+        """
+        try:
+            endpoint = Template(ApiV1Endpoints.PROJECTS_SUMMARY.value).substitute(
+                username=self.username,
+                projectName=self.project_name,
+                limit=100,
+                offset=0
+            )
+            response = call_api_v1(
+                host=self.host,
+                endpoint=endpoint,
+                method="GET",
+                api_key=self.api_key,
+                ca_path=self.ca_path,
+            )
+            projects = response.json()
+
+            for project in projects:
+                if project.get("name") == self.project_name:
+                    slug = project.get("slug_raw")
+                    if slug:
+                        logging.debug(f"Found slug from V1 API: {slug}")
+                        return slug
+        except Exception as e:
+            logging.debug(f"V1 API fallback failed: {e}")
+
+        return None
 
     def transfer_project(self, log_filedir: str, verify=False):
         owner_changed = False
@@ -1329,7 +1442,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
                     if project["name"].lower() == self.project_name.lower():
                         self.project_id = project["id"]
                         if not self.project_slug:
-                            self.project_slug = project.get("slug") or project.get("slug_raw") or self.project_name.lower()
+                            # Try to get slug from V2 API first (slug or slug_raw fields)
+                            self.project_slug = project.get("slug")
+
+                            # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                            if not self.project_slug:
+                                logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                                self.project_slug = self._get_project_slug_from_v1()
+
+                            # Last resort: use project Name
+                            if not self.project_slug:
+                                logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                                self.project_slug = self.project_name.lower()
+
+                        logging.debug(f"Found project: name='{self.project_name}', slug='{self.project_slug}', id='{self.project_id}'")
                         break
                 
                 # If not found, try enhanced search (all accessible projects including team/shared)
@@ -1351,8 +1477,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
                             if project["name"].lower() == self.project_name.lower():
                                 self.project_id = project["id"]
                                 if not self.project_slug:
-                                    self.project_slug = project.get("slug") or project.get("slug_raw") or self.project_name.lower()
-                                logging.info(f"Found project {self.project_name} in accessible projects (ID: {self.project_id})")
+                                    # Try to get slug from V2 API first (slug or slug_raw fields)
+                                    self.project_slug = project.get("slug")
+
+                                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                                    if not self.project_slug:
+                                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                                        self.project_slug = self._get_project_slug_from_v1()
+
+                                    # Last resort: use project Name
+                                    if not self.project_slug:
+                                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                                        self.project_slug = self.project_name.lower()
+
+                                logging.info(f"Found project {self.project_name} in accessible projects (slug: {self.project_slug})")
                                 break
                     except Exception as e:
                         logging.warning(f"Could not search all accessible projects: {e}")

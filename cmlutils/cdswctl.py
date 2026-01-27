@@ -61,6 +61,27 @@ def obtain_cdswctl(host: str, ca_path: str) -> str:
 
 
 def cdswctl_login(cdswctl_path: str, host: str, username: str, api_key: str, ca_path: str = ""):
+    """
+    Authenticate with CML workspace using cdswctl login command.
+
+    Args:
+        cdswctl_path: Path to the cdswctl binary
+        host: CML workspace hostname/URL
+        username: CML username
+        api_key: CML API key for authentication
+        ca_path: Path to CA certificate or "false" to skip SSL verification
+
+    Returns:
+        subprocess.CompletedProcess: The completed subprocess result
+
+    Raises:
+        Exception: If cdswctl login fails with non-zero return code
+
+    Side Effects:
+        - Executes cdswctl login command
+        - Logs debug information about the login process
+        - Logs error information if login fails
+    """
     logging.info("Logging into cdsw via cdswctl")
     cmd = [cdswctl_path, "login", "-n", username, "-u", host, "-y", api_key]
     
@@ -69,4 +90,26 @@ def cdswctl_login(cdswctl_path: str, host: str, username: str, api_key: str, ca_
         cmd.append("--insecure-skip-verify")
         logging.debug("Added --insecure-skip-verify flag to cdswctl login command")
     
-    return subprocess.run(cmd)
+    # Log the command (masking the API key for security)
+    masked_cmd = cmd.copy()
+    api_key_index = masked_cmd.index(api_key) if api_key in masked_cmd else -1
+    if api_key_index != -1:
+        masked_cmd[api_key_index] = "<api_key>"
+    logging.debug(f"cdswctl login command: {' '.join(masked_cmd)}")
+
+    # Execute login with output capture
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
+    )
+
+    # Validate login succeeded
+    if result.returncode != 0:
+        logging.error(f"cdswctl login failed: {result.stderr}")
+        raise Exception(f"cdswctl login failed with return code {result.returncode}")
+
+    logging.info("Login succeeded")
+    logging.debug(f"cdswctl login output: {result.stdout}")
+
+    return result
