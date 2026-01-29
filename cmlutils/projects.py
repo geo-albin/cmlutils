@@ -1248,6 +1248,8 @@ print("Please update the application script path in CML UI")
         if not proj_data[0].get("shared_memory_limit"):
             proj_data[0]["shared_memory_limit"] = 0
 
+        if not self.project_id:    
+            self.project_id = proj_data_raw["id"]
         model_data, model_list = self.collect_export_model_list(
             proj_data_raw["id"]
         )
