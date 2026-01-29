@@ -243,6 +243,23 @@ WARNING: InsecureRequestWarning: Unverified HTTPS request is being made to host 
 INFO: Login succeeded
 ```
 
+## Handling Missing Runtimes
+
+If you see warnings about missing runtimes during import:
+
+```
+INFO - Application 'app-name' requires runtime: sample-runtime-image (NOT available in target)
+WARNING - ⏭️  Skipped application 'app-name': Required runtime not available
+```
+
+**Solution**: Add the missing runtime to the target workspace before re-running the import.
+
+1. Navigate to: **Site Administration → Runtime Catalog → Add Runtime**
+2. Add the required runtime under Runtime Catalog
+3. Re-run the import command
+
+**Note**: Runtime addons (Spark, Hadoop CLI, etc.) are removed for applications during import to avoid validation failures. Configure them manually in CML UI after import if needed under application settings.
+
 ## Installation
 
 ### From Zip File (Recommended for Client Deployments)

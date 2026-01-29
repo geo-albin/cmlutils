@@ -2815,6 +2815,10 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                     f"{original_script_path} → {relative_script_path}"
                                 )
                             
+                            # Remove runtime_addon_identifiers to avoid validation failures
+                            if "runtime_addon_identifiers" in app_metadata:
+                                del app_metadata["runtime_addon_identifiers"]
+
                             try:
                                 app_id = self.create_application_v2(
                                     proj_id=project_id, app_metadata=app_metadata
@@ -2889,6 +2893,10 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                         fallback_runtime = runtime_list["runtimes"][0].get("image_identifier")
                                         app_metadata_fallback["runtime_identifier"] = fallback_runtime
                                         
+                                        # Remove runtime_addon_identifiers to avoid validation failures
+                                        if "runtime_addon_identifiers" in app_metadata_fallback:
+                                            del app_metadata_fallback["runtime_addon_identifiers"]
+
                                         app_id = self.create_application_v2(
                                             proj_id=project_id, app_metadata=app_metadata_fallback
                                         )
