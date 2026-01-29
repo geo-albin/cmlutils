@@ -677,6 +677,7 @@ def project_import_cmd(project_name, verify, verbose):
 )
 def project_verify_cmd(project_name, verbose):
     pexport = None
+    pimport = None
     validation_data = dict()
     config = _read_config_file(
         os.path.expanduser("~") + "/.cmlutils/export-config.ini", project_name
@@ -775,7 +776,6 @@ def project_verify_cmd(project_name, verbose):
             exported_job_list,
         ) = pexport.collect_export_project_data()
         pexport.terminate_ssh_session()
-        pimport = None
         import_config = _read_config_file(
             os.path.expanduser("~") + "/.cmlutils/import-config.ini", project_name
         )
