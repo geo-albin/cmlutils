@@ -248,7 +248,7 @@ INFO: Login succeeded
 If you see warnings about missing runtimes during import:
 
 ```
-INFO - Application 'app-name' requires runtime: sample-runtime-image (NOT available in target)
+INFO - Application 'app-name' requires runtime: <sample-runtime-image> (NOT available in target)
 WARNING - ⏭️  Skipped application 'app-name': Required runtime not available
 ```
 
@@ -291,6 +291,22 @@ Applications using system scripts (paths starting with `/`) require a post-impor
 **Example:** Change `opt/vizapps/tools/arcviz/startup_app.py` to `/opt/vizapps/tools/arcviz/startup_app.py`
 
 **Why:** System scripts exist in the runtime container and cannot be exported. Placeholders enable migration and contain instructions for manual path correction.
+
+## Handling Project Migration with Model Workloads
+``` After migrating a project that includes model workloads, you may encounter an error similar to the following:
+WARNING - ⚠️ Failed to create build for model 'test-model12':
+failed to create forwarding parameters: rpc error: code = Internal desc = failed to populate model build params:
+could not process runtime addons: rpc error: code = Internal desc = Failed to fetch runtime info for runtime <sample-runtime-image> : record not found
+```
+**Solution**
+Run the following commands before exporting a project that contains model workloads:
+1. cmlutil helpers populate_engine_runtimes_mapping
+2. cmlutil project export -p <project-name>
+3. cmlutil project import -p <project-name>
+
+**Important Note**
+1. Ensure the above steps are executed prior to exporting the project.
+2. If the project was already exported and this issue is observed during model build, it is recommended to re-run the above steps and then re-export and re-import the project.
 
 ## Installation
 
