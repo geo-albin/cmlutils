@@ -260,6 +260,38 @@ WARNING - ⏭️  Skipped application 'app-name': Required runtime not available
 
 **Note**: Runtime addons (Spark, Hadoop CLI, etc.) are removed for applications during import to avoid validation failures. Configure them manually in CML UI after import if needed under application settings.
 
+## .importignore File
+
+If you encounter read-only file system errors during import (e.g., `.snapshot` directories), you can exclude these files from migration:
+
+**Location:** `<project-name>/project-data/.importignore`
+
+1. Edit the `.importignore` file in your project's `project-data/` directory
+2. Add problematic file or directory patterns
+3. Re-run the import command
+
+The `.importignore` file follows the same semantics as `.gitignore`.
+
+**Note**: `.snapshot` directories are automatically excluded by default.
+
+## System Script Applications
+
+Applications using system scripts (paths starting with `/`) require a post-import update:
+
+**What happens:**
+- Export creates placeholder files for system scripts (e.g., `/opt/...`, `/usr/...`, `/bin/...`)
+- Import removes the leading slash: `/opt/script.py` → `opt/script.py`
+- This only impacts applications (not jobs or models)
+
+**Post-import action:**
+1. Go to CML UI → Applications → Edit Application Settings
+2. Add the leading slash back to the script path
+3. Update and Start the application
+
+**Example:** Change `opt/vizapps/tools/arcviz/startup_app.py` to `/opt/vizapps/tools/arcviz/startup_app.py`
+
+**Why:** System scripts exist in the runtime container and cannot be exported. Placeholders enable migration and contain instructions for manual path correction.
+
 ## Installation
 
 ### From Zip File (Recommended for Client Deployments)
