@@ -1811,6 +1811,21 @@ class ProjectImporter(BaseWorkspaceInteractor):
         )
         return
 
+    def update_application_v2(self, proj_id: str, app_id: str, app_metadata: dict) -> None:
+        """Update application using PATCH API"""
+        endpoint = Template(ApiV2Endpoints.UPDATE_APP.value).substitute(
+            project_id=proj_id, application_id=app_id
+        )
+        response = call_api_v2(
+            host=self.host,
+            endpoint=endpoint,
+            method="PATCH",
+            user_token=self.apiv2_key,
+            json_data=app_metadata,
+            ca_path=self.ca_path,
+        )
+        return
+
     def create_job_v2(self, proj_id: str, job_metadata) -> str:
         try:
             endpoint = Template(ApiV2Endpoints.CREATE_JOB.value).substitute(
@@ -2918,21 +2933,51 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                 self.stop_application_v2(proj_id=project_id, app_id=app_id)
                                 
                                 if converted_script:
-                                    logging.info(
-                                        f"✅ Application '{app_name}' imported with converted script path. "
-                                        f"Update in CML UI to: {original_script_path}"
-                                    )
-                                    # Track as needing manual update
-                                    if "apps_imported_with_modifications" not in self.import_tracking:
-                                        self.import_tracking["apps_imported_with_modifications"] = []
-                                    self.import_tracking["apps_imported_with_modifications"].append({
-                                        "name": app_name,
-                                        "runtime": required_runtime,
-                                        "original_script": original_script_path,
-                                        "current_script": app_metadata["script"],
-                                        "reason": "System script path converted to relative path for migration",
-                                        "action": f"Update application script in CML UI from '{app_metadata['script']}' back to '{original_script_path}'"
-                                    })
+                                    # Try to automatically fix the script path back to original
+                                    try:
+                                        logging.info(
+                                            f"🔧 Auto-correcting script path for '{app_name}' back to: {original_script_path}"
+                                        )
+                                        
+                                        # Update with just the corrected script path
+                                        update_payload = {
+                                            "script": original_script_path
+                                        }
+                                        
+                                        self.update_application_v2(
+                                            proj_id=project_id,
+                                            app_id=app_id,
+                                            app_metadata=update_payload
+                                        )
+                                        
+                                        logging.info(
+                                            f"✅ Application '{app_name}' imported and script path automatically corrected to: {original_script_path}"
+                                        )
+                                        self.import_tracking["apps_imported_successfully"].append({
+                                            "name": app_name,
+                                            "runtime": required_runtime or "default",
+                                            "script": original_script_path,
+                                            "auto_corrected": True
+                                        })
+                                    except Exception as e:
+                                        # Auto-correction failed, fall back to manual instruction
+                                        logging.warning(
+                                            f"⚠️  Could not auto-correct script path for '{app_name}': {e}"
+                                        )
+                                        logging.info(
+                                            f"✅ Application '{app_name}' imported. Manual update required - change script to: {original_script_path}"
+                                        )
+                                        # Track as needing manual update
+                                        if "apps_imported_with_modifications" not in self.import_tracking:
+                                            self.import_tracking["apps_imported_with_modifications"] = []
+                                        self.import_tracking["apps_imported_with_modifications"].append({
+                                            "name": app_name,
+                                            "runtime": required_runtime,
+                                            "original_script": original_script_path,
+                                            "current_script": app_metadata["script"],
+                                            "reason": "System script path converted to relative path for migration",
+                                            "action": f"Update application script in CML UI from '{app_metadata['script']}' back to '{original_script_path}'"
+                                        })
                                 else:
                                     logging.info(f"✅ Application '{app_name}' imported successfully")
                                     self.import_tracking["apps_imported_successfully"].append({

@@ -276,21 +276,24 @@ The `.importignore` file follows the same semantics as `.gitignore`.
 
 ## System Script Applications
 
-Applications using system scripts (paths starting with `/`) require a post-import update:
+Applications using system scripts (paths starting with `/`) are **automatically corrected** after import:
 
 **What happens:**
 - Export creates placeholder files for system scripts (e.g., `/opt/...`, `/usr/...`, `/bin/...`)
-- Import removes the leading slash: `/opt/script.py` → `opt/script.py`
-- This only impacts applications (not jobs or models)
+- Import temporarily uses relative path: `/opt/script.py` → `opt/script.py`
+- **Auto-correction**: Tool automatically updates the script path back to `/opt/script.py`
+- Only affects applications (not jobs or models)
 
-**Post-import action:**
+**No manual action needed** - the tool handles the path correction automatically.
+
+**If auto-correction fails**, you'll see a warning in the logs. Manually update:
 1. Go to CML UI → Applications → Edit Application Settings
 2. Add the leading slash back to the script path
 3. Update and Start the application
 
-**Example:** Change `opt/vizapps/tools/arcviz/startup_app.py` to `/opt/vizapps/tools/arcviz/startup_app.py`
+**Example:** `opt/vizapps/tools/arcviz/startup_app.py` → `/opt/vizapps/tools/arcviz/startup_app.py`
 
-**Why:** System scripts exist in the runtime container and cannot be exported. Placeholders enable migration and contain instructions for manual path correction.
+**Why:** System scripts exist in the runtime container and cannot be exported. Placeholders enable migration, and the tool automatically restores the correct paths.
 
 ## Installation
 
