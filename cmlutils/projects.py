@@ -11,6 +11,7 @@ from sys import stdout
 from typing import Any
 
 from requests import HTTPError  # pyright: ignore[reportMissingModuleSource]
+from slugify import slugify
 
 from cmlutils import constants, legacy_engine_runtime_constants
 from cmlutils.base import BaseWorkspaceInteractor
@@ -539,7 +540,7 @@ class ProjectExporter(BaseWorkspaceInteractor):
                     # If V2 doesn't have slug/slug_raw, try V1 API as fallback
                     if not project_slug:
                         logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
-                        project_slug = self._get_project_slug_from_v1()
+                        project_slug = slugify(self.project_name)
 
                     # Last resort: use project id (might work in some CML versions) or project name
                     if not project_slug:
@@ -561,44 +562,6 @@ class ProjectExporter(BaseWorkspaceInteractor):
                             constants.USER_TYPE,
                         )
         return None, None, None
-
-    def _get_project_slug_from_v1(self):
-        """
-        Get project slug using V1 API projects-summary endpoint.
-
-        Returns:
-            str: Project slug or None if not found
-
-        Side Effects:
-            - Calls V1 API projects-summary endpoint
-            - Logs debug information
-        """
-        try:
-            endpoint = Template(ApiV1Endpoints.PROJECTS_SUMMARY.value).substitute(
-                username=self.username,
-                projectName=self.project_name,
-                limit=100,
-                offset=0
-            )
-            response = call_api_v1(
-                host=self.host,
-                endpoint=endpoint,
-                method="GET",
-                api_key=self.api_key,
-                ca_path=self.ca_path,
-            )
-            projects = response.json()
-
-            for project in projects:
-                if project.get("name") == self.project_name:
-                    slug = project.get("slug_raw")
-                    if slug:
-                        logging.debug(f"Found slug from V1 API: {slug}")
-                        return slug
-        except Exception as e:
-            logging.debug(f"V1 API fallback failed: {e}")
-
-        return None
 
     # Get all models list info using API v2
     def get_models_listv2(self, project_id: str):
@@ -1398,7 +1361,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
                     # If V2 doesn't have slug/slug_raw, try V1 API as fallback
                     if not project_slug:
                         logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
-                        project_slug = self._get_project_slug_from_v1()
+                        project_slug = slugify(self.project_name)
 
                     # Last resort: use project Name
                     if not project_slug:
@@ -1432,7 +1395,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
                     # If V2 doesn't have slug/slug_raw, try V1 API as fallback
                     if not project_slug:
                         logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
-                        project_slug = self._get_project_slug_from_v1()
+                        project_slug = slugify(self.project_name)
 
                     # Last resort: use project Name
                     if not project_slug:
@@ -1445,44 +1408,6 @@ class ProjectImporter(BaseWorkspaceInteractor):
             logging.warning(f"Could not search all accessible projects: {e}")
         
         return None, None
-
-    def _get_project_slug_from_v1(self):
-        """
-        Get project slug using V1 API projects-summary endpoint.
-
-        Returns:
-            str: Project slug or None if not found
-
-        Side Effects:
-            - Calls V1 API projects-summary endpoint
-            - Logs debug information
-        """
-        try:
-            endpoint = Template(ApiV1Endpoints.PROJECTS_SUMMARY.value).substitute(
-                username=self.username,
-                projectName=self.project_name,
-                limit=100,
-                offset=0
-            )
-            response = call_api_v1(
-                host=self.host,
-                endpoint=endpoint,
-                method="GET",
-                api_key=self.api_key,
-                ca_path=self.ca_path,
-            )
-            projects = response.json()
-
-            for project in projects:
-                if project.get("name") == self.project_name:
-                    slug = project.get("slug_raw")
-                    if slug:
-                        logging.debug(f"Found slug from V1 API: {slug}")
-                        return slug
-        except Exception as e:
-            logging.debug(f"V1 API fallback failed: {e}")
-
-        return None
 
     def transfer_project(self, log_filedir: str, verify=False):
         owner_changed = False
@@ -1527,7 +1452,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
                             # If V2 doesn't have slug/slug_raw, try V1 API as fallback
                             if not self.project_slug:
                                 logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
-                                self.project_slug = self._get_project_slug_from_v1()
+                                self.project_slug = slugify(self.project_name)
 
                             # Last resort: use project Name
                             if not self.project_slug:
@@ -1562,7 +1487,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                     # If V2 doesn't have slug/slug_raw, try V1 API as fallback
                                     if not self.project_slug:
                                         logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
-                                        self.project_slug = self._get_project_slug_from_v1()
+                                        self.project_slug = slugify(self.project_name)
 
                                     # Last resort: use project Name
                                     if not self.project_slug:
