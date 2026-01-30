@@ -248,7 +248,7 @@ INFO: Login succeeded
 If you see warnings about missing runtimes during import:
 
 ```
-INFO - Application 'app-name' requires runtime: sample-runtime-image (NOT available in target)
+INFO - Application 'app-name' requires runtime: <sample-runtime-image> (NOT available in target)
 WARNING - ⏭️  Skipped application 'app-name': Required runtime not available
 ```
 
@@ -296,8 +296,7 @@ Applications using system scripts (paths starting with `/`) require a post-impor
 ``` After migrating a project that includes model workloads, you may encounter an error similar to the following:
 WARNING - ⚠️ Failed to create build for model 'test-model12':
 failed to create forwarding parameters: rpc error: code = Internal desc = failed to populate model build params:
-could not process runtime addons: rpc error: code = Internal desc = Failed to fetch runtime info for runtime
-'docker.repository.cloudera.com/cloudera/cdsw/ml-runtime-workbench-python3.9-standard:2023.05.2-b7': record not found
+could not process runtime addons: rpc error: code = Internal desc = Failed to fetch runtime info for runtime <sample-runtime-image> : record not found
 ```
 **Solution**
 Run the following commands before exporting a project that contains model workloads:
