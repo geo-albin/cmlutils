@@ -260,6 +260,20 @@ WARNING - ⏭️  Skipped application 'app-name': Required runtime not available
 
 **Note**: Runtime addons (Spark, Hadoop CLI, etc.) are removed for applications during import to avoid validation failures. Configure them manually in CML UI after import if needed under application settings.
 
+## .importignore File
+
+If you encounter read-only file system errors during import (e.g., `.snapshot` directories), you can exclude these files from migration:
+
+**Location:** `<project-name>/project-data/.importignore`
+
+1. Edit the `.importignore` file in your project's `project-data/` directory
+2. Add problematic file or directory patterns
+3. Re-run the import command
+
+The `.importignore` file follows the same semantics as `.gitignore`.
+
+**Note**: `.snapshot` directories are automatically excluded by default.
+
 ## Installation
 
 ### From Zip File (Recommended for Client Deployments)
