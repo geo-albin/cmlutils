@@ -35,6 +35,7 @@ class ApiV2Endpoints(Enum):
     BUILD_MODEL = "/api/v2/projects/$project_id/models/$model_id/builds"
     CREATE_APP = "/api/v2/projects/$project_id/applications"
     STOP_APP = "/api/v2/projects/$project_id/applications/$application_id:stop"
+    UPDATE_APP = "/api/v2/projects/$project_id/applications/$application_id"
     CREATE_JOB = "/api/v2/projects/$project_id/jobs"
     UPDATE_JOB = "/api/v2/projects/$project_id/jobs/$job_id"
     MODELS_LIST = "/api/v2/projects/$project_id/models"
