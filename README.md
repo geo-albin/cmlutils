@@ -243,6 +243,74 @@ WARNING: InsecureRequestWarning: Unverified HTTPS request is being made to host 
 INFO: Login succeeded
 ```
 
+## Handling Missing Runtimes
+
+If you see warnings about missing runtimes during import:
+
+```
+INFO - Application 'app-name' requires runtime: <sample-runtime-image> (NOT available in target)
+WARNING - ⏭️  Skipped application 'app-name': Required runtime not available
+```
+
+**Solution**: Add the missing runtime to the target workspace before re-running the import.
+
+1. Navigate to: **Site Administration → Runtime Catalog → Add Runtime**
+2. Add the required runtime under Runtime Catalog
+3. Re-run the import command
+
+**Note**: Runtime addons (Spark, Hadoop CLI, etc.) are removed for applications during import to avoid validation failures. Configure them manually in CML UI after import if needed under application settings.
+
+## .importignore File
+
+If you encounter read-only file system errors during import (e.g., `.snapshot` directories), you can exclude these files from migration:
+
+**Location:** `<project-name>/project-data/.importignore`
+
+1. Edit the `.importignore` file in your project's `project-data/` directory
+2. Add problematic file or directory patterns
+3. Re-run the import command
+
+The `.importignore` file follows the same semantics as `.gitignore`.
+
+**Note**: `.snapshot` directories are automatically excluded by default.
+
+## System Script Applications
+
+Applications using system scripts (paths starting with `/`) are **automatically corrected** after import:
+
+**What happens:**
+- Export creates placeholder files for system scripts (e.g., `/opt/...`, `/usr/...`, `/bin/...`)
+- Import temporarily uses relative path: `/opt/script.py` → `opt/script.py`
+- **Auto-correction**: Tool automatically updates the script path back to `/opt/script.py`
+- Only affects applications (not jobs or models)
+
+**No manual action needed** - the tool handles the path correction automatically.
+
+**If auto-correction fails**, you'll see a warning in the logs. Manually update:
+1. Go to CML UI → Applications → Edit Application Settings
+2. Add the leading slash back to the script path
+3. Update and Start the application
+
+**Example:** `opt/vizapps/tools/arcviz/startup_app.py` → `/opt/vizapps/tools/arcviz/startup_app.py`
+
+**Why:** System scripts exist in the runtime container and cannot be exported. Placeholders enable migration, and the tool automatically restores the correct paths.
+
+## Handling Project Migration with Model Workloads
+``` After migrating a project that includes model workloads, you may encounter an error similar to the following:
+WARNING - ⚠️ Failed to create build for model 'test-model12':
+failed to create forwarding parameters: rpc error: code = Internal desc = failed to populate model build params:
+could not process runtime addons: rpc error: code = Internal desc = Failed to fetch runtime info for runtime <sample-runtime-image> : record not found
+```
+**Solution**
+Run the following commands before exporting a project that contains model workloads:
+1. cmlutil helpers populate_engine_runtimes_mapping
+2. cmlutil project export -p <project-name>
+3. cmlutil project import -p <project-name>
+
+**Important Note**
+1. Ensure the above steps are executed prior to exporting the project.
+2. If the project was already exported and this issue is observed during model build, it is recommended to re-run the above steps and then re-export and re-import the project.
+
 ## Installation
 
 ### From Zip File (Recommended for Client Deployments)

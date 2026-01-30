@@ -11,6 +11,7 @@ from sys import stdout
 from typing import Any
 
 from requests import HTTPError  # pyright: ignore[reportMissingModuleSource]
+from slugify import slugify
 
 from cmlutils import constants, legacy_engine_runtime_constants
 from cmlutils.base import BaseWorkspaceInteractor
@@ -156,6 +157,44 @@ def get_ignore_files(
             logging.error("Failed to find ignore files due to network issues.")
             raise e
 
+def get_importignore_file(top_level_dir: str, project_name: str) -> str:
+    """
+    Fetch or create .importignore file for the project.
+    """
+    importignore_path = os.path.join(
+        top_level_dir, project_name, "project-data", constants.IMPORTIGNORE_FILE_NAME
+    )
+    
+    if os.path.exists(importignore_path):
+        logging.info("Using existing .importignore file: %s", importignore_path)
+        return importignore_path
+    
+    # Create default .importignore file
+    logging.info(
+        "Import ignore file does not exist. Creating .importignore file."
+    )
+    
+    with open(importignore_path, "w", encoding=utf_8.getregentry().name) as f:
+        for entry in constants.DEFAULT_IMPORTIGNORE_ENTRIES:
+            f.write(entry + "\n")
+    
+    os.chmod(importignore_path, 0o600)
+    logging.info("Created .importignore file at: %s", importignore_path)
+    
+    return importignore_path
+
+
+def parse_rsync_errors_from_output(stderr_output: str) -> list:
+    """Find lines with read-only file system errors."""
+    if not stderr_output:
+        return []
+    
+    error_lines = []
+    for line in stderr_output.split('\n'):
+        if "Read-only file system" in line:
+            error_lines.append(line.strip())
+    
+    return error_lines
 
 def get_rsync_enabled_runtime_id(host: str, api_key: str, ca_path: str) -> int:
     logging.info("Looking for rsync-enabled runtime...")
@@ -204,6 +243,7 @@ def transfer_project_files(
     project_name: str,
     log_filedir: str,
     exclude_file_path: str = None,
+    importignore_path: str = None,
 ):
     log_filename = log_filedir + constants.LOG_FILE
     verbose = os.environ.get('CMLUTILS_VERBOSE', 'False').lower() == 'true'
@@ -213,6 +253,7 @@ def transfer_project_files(
         logging.debug("Transfer details - Source: %s, Destination: %s, SSH Port: %s", 
                      source, destination, sshport)
         logging.debug("Using exclude file: %s", exclude_file_path if exclude_file_path else "None")
+        logging.debug("Using importignore file: %s", importignore_path if importignore_path else "None")
         logging.debug("Retry limit set to: %d", retry_limit)
     
     ssh_directive = f"ssh -p {sshport} -oStrictHostKeyChecking=no"
@@ -229,16 +270,33 @@ def transfer_project_files(
         "--log-file",
         log_filename,
     ]
+    
+    # Add importignore exclusions if provided
+    if importignore_path is not None and os.path.exists(importignore_path):
+        logging.info("Using .importignore file for exclusions: %s", importignore_path)
+        subprocess_arguments.append(f"--exclude-from={importignore_path}")
+
     if exclude_file_path is not None:
         logging.info("Exclude file path is provided for file transfer")
         subprocess_arguments.append(f"--exclude-from={exclude_file_path}")
     subprocess_arguments.extend([source, destination])
+    
+    return_code = 0
+    last_stderr = ""
+    
     for i in range(retry_limit):
         if verbose:
             logging.debug("Rsync attempt %d of %d", i + 1, retry_limit)
             logging.debug("Executing rsync command: %s", " ".join(subprocess_arguments))
         
-        return_code = subprocess.call(subprocess_arguments)
+        result = subprocess.run(
+            subprocess_arguments,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        return_code = result.returncode
+        last_stderr = result.stderr or ""
+        
         if return_code == 0:
             logging.info("Project files transfered successfully")
             return
@@ -249,9 +307,21 @@ def transfer_project_files(
         logging.warning("Got non zero return code. Retrying...")
         
     if return_code != 0:
-        logging.error(
-            "Retries exhausted for rsync.. Failing script for project %s", project_name
-        )
+        # Parse last stderr for read-only errors
+        readonly_errors = parse_rsync_errors_from_output(last_stderr)
+        
+        if readonly_errors:
+            logging.error("Retries exhausted for rsync.. Failing script for project %s", project_name)
+            logging.error("RSYNC FAILED: Read-only file system errors detected")
+            logging.error("Error details:")
+            for error_line in readonly_errors[:5]:
+                logging.error("  %s", error_line)
+            if importignore_path:
+                logging.error("")
+                logging.error("Verify the files, add them to: %s if there are any read-only file system errors to exclude the verification during import. Retry the import after adding the files", importignore_path)
+        else:
+            logging.error("Retries exhausted for rsync.. Failing script for project %s", project_name)
+        
         raise RuntimeError("Retries exhausted for rsync.. Failing script")
 
 
@@ -263,6 +333,7 @@ def verify_files(
     project_name: str,
     log_filedir: str,
     exclude_file_path: str = None,
+    importignore_path: str = None,
 ):
     log_filename = log_filedir + constants.LOG_FILE
     logging.info("Validating files over ssh from sshport %s", sshport)
@@ -281,6 +352,11 @@ def verify_files(
         "--log-file",
         log_filename,
     ]
+    # Add importignore exclusions if provided
+    if importignore_path is not None and os.path.exists(importignore_path):
+        logging.info("Using .importignore file for exclusions: %s", importignore_path)
+        subprocess_arguments.append(f"--exclude-from={importignore_path}")
+    
     if exclude_file_path is not None:
         logging.info("Exclude file path is provided for file Verification")
         subprocess_arguments.append(f"--exclude-from={exclude_file_path}")
@@ -458,8 +534,20 @@ class ProjectExporter(BaseWorkspaceInteractor):
                     owner_info = project.get("owner", {})
                     creator_info = project.get("creator", {})
                     
-                    # V2 API uses project name as slug (V1 had slug_raw field but V2 doesn't)
-                    project_slug = project.get("slug") or project.get("slug_raw") or self.project_name
+                    # Try to get slug from V2 API (newer CML versions have explicit slug field)
+                    project_slug = project.get("slug")
+
+                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                    if not project_slug:
+                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                        project_slug = slugify(self.project_name)
+
+                    # Last resort: use project id (might work in some CML versions) or project name
+                    if not project_slug:
+                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                        project_slug = self.project_name.lower()
+
+                    logging.debug(f"Found project: name='{self.project_name}', slug='{project_slug}', id='{project.get('id')}'")
                     
                     if owner_info.get("type") == constants.ORGANIZATION_TYPE:
                         return (
@@ -725,6 +813,7 @@ class ProjectExporter(BaseWorkspaceInteractor):
                 project_name=self.project_name,
                 exclude_file_path=exclude_file_path,
                 log_filedir=log_filedir,
+                importignore_path=None,
             )
             self.remove_cdswctl_dir(cdswctl_path)
             self.terminate_ssh_session()
@@ -795,6 +884,7 @@ class ProjectExporter(BaseWorkspaceInteractor):
             project_name=self.project_name,
             exclude_file_path=exclude_file_path,
             log_filedir=log_filedir,
+            importignore_path=None,
         )
         self.remove_cdswctl_dir(cdswctl_path)
         self.terminate_ssh_session()
@@ -1198,6 +1288,8 @@ print("Please update the application script path in CML UI")
         if not proj_data[0].get("shared_memory_limit"):
             proj_data[0]["shared_memory_limit"] = 0
 
+        if not self.project_id:    
+            self.project_id = proj_data_raw["id"]
         model_data, model_list = self.collect_export_model_list(
             proj_data_raw["id"]
         )
@@ -1263,8 +1355,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
             for project in project_list:
                 if project["name"] == self.project_name:
                     creator_info = project.get("creator", {})
-                    # V2 API uses project name as slug (V1 had slug_raw field but V2 doesn't)
-                    project_slug = project.get("slug") or project.get("slug_raw") or self.project_name
+                    # Try to get slug from V2 API first (slug or slug_raw fields)
+                    project_slug = project.get("slug")
+
+                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                    if not project_slug:
+                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                        project_slug = slugify(self.project_name)
+
+                    # Last resort: use project Name
+                    if not project_slug:
+                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                        project_slug = self.project_name.lower()
+
+                    logging.debug(f"Found project: name='{self.project_name}', slug='{project_slug}'")
                     return creator_info.get("username"), project_slug
         
         # Enhanced search: List all accessible projects (including team/shared projects)
@@ -1285,7 +1389,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
                 if project["name"].lower() == self.project_name.lower():
                     logging.info(f"Found project {self.project_name} in accessible projects (team/shared)")
                     creator_info = project.get("creator", {})
-                    project_slug = project.get("slug") or project.get("slug_raw") or self.project_name
+                    # Try to get slug from V2 API first (slug field)
+                    project_slug = project.get("slug")
+
+                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                    if not project_slug:
+                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                        project_slug = slugify(self.project_name)
+
+                    # Last resort: use project Name
+                    if not project_slug:
+                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project name")
+                        project_slug = self.project_name.lower()
+
+                    logging.debug(f"Found project: name='{self.project_name}', slug='{project_slug}'")
                     return creator_info.get("username"), project_slug
         except Exception as e:
             logging.warning(f"Could not search all accessible projects: {e}")
@@ -1329,7 +1446,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
                     if project["name"].lower() == self.project_name.lower():
                         self.project_id = project["id"]
                         if not self.project_slug:
-                            self.project_slug = project.get("slug") or project.get("slug_raw") or self.project_name.lower()
+                            # Try to get slug from V2 API first (slug or slug_raw fields)
+                            self.project_slug = project.get("slug")
+
+                            # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                            if not self.project_slug:
+                                logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                                self.project_slug = slugify(self.project_name)
+
+                            # Last resort: use project Name
+                            if not self.project_slug:
+                                logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                                self.project_slug = self.project_name.lower()
+
+                        logging.debug(f"Found project: name='{self.project_name}', slug='{self.project_slug}', id='{self.project_id}'")
                         break
                 
                 # If not found, try enhanced search (all accessible projects including team/shared)
@@ -1351,8 +1481,20 @@ class ProjectImporter(BaseWorkspaceInteractor):
                             if project["name"].lower() == self.project_name.lower():
                                 self.project_id = project["id"]
                                 if not self.project_slug:
-                                    self.project_slug = project.get("slug") or project.get("slug_raw") or self.project_name.lower()
-                                logging.info(f"Found project {self.project_name} in accessible projects (ID: {self.project_id})")
+                                    # Try to get slug from V2 API first (slug or slug_raw fields)
+                                    self.project_slug = project.get("slug")
+
+                                    # If V2 doesn't have slug/slug_raw, try V1 API as fallback
+                                    if not self.project_slug:
+                                        logging.debug(f"V2 API doesn't have slug field, trying V1 API fallback")
+                                        self.project_slug = slugify(self.project_name)
+
+                                    # Last resort: use project Name
+                                    if not self.project_slug:
+                                        logging.warning(f"Could not find slug in V2 or V1 API, falling back to project Name")
+                                        self.project_slug = self.project_name.lower()
+
+                                logging.info(f"Found project {self.project_name} in accessible projects (slug: {self.project_slug})")
                                 break
                     except Exception as e:
                         logging.warning(f"Could not search all accessible projects: {e}")
@@ -1385,6 +1527,10 @@ class ProjectImporter(BaseWorkspaceInteractor):
                 project_slug=self.project_slug,
             )
             self._ssh_subprocess = ssh_subprocess
+            
+            # Get importignore file (create if doesn't exist)
+            importignore_path = get_importignore_file(self.top_level_dir, self.project_name)
+            
             transfer_project_files(
                 sshport=port,
                 source=os.path.join(
@@ -1397,6 +1543,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
                 retry_limit=3,
                 project_name=self.project_name,
                 log_filedir=log_filedir,
+                importignore_path=importignore_path,
             )
             if verify:
                 result = verify_files(
@@ -1411,6 +1558,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
                     retry_limit=3,
                     project_name=self.project_name,
                     log_filedir=log_filedir,
+                    importignore_path=importignore_path,
                 )
             
             self.remove_cdswctl_dir(cdswctl_path)
@@ -1455,6 +1603,14 @@ class ProjectImporter(BaseWorkspaceInteractor):
             project_slug=self.project_slug,
         )
         self._ssh_subprocess = ssh_subprocess
+        
+        # Use importignore file if it exists from import
+        importignore_path = os.path.join(
+            self.top_level_dir, self.project_name, "project-data", constants.IMPORTIGNORE_FILE_NAME
+        )
+        if not os.path.exists(importignore_path):
+            importignore_path = None
+        
         result = verify_files(
             sshport=port,
             source=os.path.join(
@@ -1467,6 +1623,7 @@ class ProjectImporter(BaseWorkspaceInteractor):
             retry_limit=3,
             project_name=self.project_name,
             log_filedir=log_filedir,
+            importignore_path=importignore_path,
         )
         self.remove_cdswctl_dir(cdswctl_path)
         return result
@@ -1575,6 +1732,21 @@ class ProjectImporter(BaseWorkspaceInteractor):
             endpoint=endpoint,
             method="POST",
             user_token=self.apiv2_key,
+            ca_path=self.ca_path,
+        )
+        return
+
+    def update_application_v2(self, proj_id: str, app_id: str, app_metadata: dict) -> None:
+        """Update application using PATCH API"""
+        endpoint = Template(ApiV2Endpoints.UPDATE_APP.value).substitute(
+            project_id=proj_id, application_id=app_id
+        )
+        response = call_api_v2(
+            host=self.host,
+            endpoint=endpoint,
+            method="PATCH",
+            user_token=self.apiv2_key,
+            json_data=app_metadata,
             ca_path=self.ca_path,
         )
         return
@@ -2675,6 +2847,10 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                     f"{original_script_path} → {relative_script_path}"
                                 )
                             
+                            # Remove runtime_addon_identifiers to avoid validation failures
+                            if "runtime_addon_identifiers" in app_metadata:
+                                del app_metadata["runtime_addon_identifiers"]
+
                             try:
                                 app_id = self.create_application_v2(
                                     proj_id=project_id, app_metadata=app_metadata
@@ -2682,21 +2858,51 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                 self.stop_application_v2(proj_id=project_id, app_id=app_id)
                                 
                                 if converted_script:
-                                    logging.info(
-                                        f"✅ Application '{app_name}' imported with converted script path. "
-                                        f"Update in CML UI to: {original_script_path}"
-                                    )
-                                    # Track as needing manual update
-                                    if "apps_imported_with_modifications" not in self.import_tracking:
-                                        self.import_tracking["apps_imported_with_modifications"] = []
-                                    self.import_tracking["apps_imported_with_modifications"].append({
-                                        "name": app_name,
-                                        "runtime": required_runtime,
-                                        "original_script": original_script_path,
-                                        "current_script": app_metadata["script"],
-                                        "reason": "System script path converted to relative path for migration",
-                                        "action": f"Update application script in CML UI from '{app_metadata['script']}' back to '{original_script_path}'"
-                                    })
+                                    # Try to automatically fix the script path back to original
+                                    try:
+                                        logging.info(
+                                            f"🔧 Auto-correcting script path for '{app_name}' back to: {original_script_path}"
+                                        )
+                                        
+                                        # Update with just the corrected script path
+                                        update_payload = {
+                                            "script": original_script_path
+                                        }
+                                        
+                                        self.update_application_v2(
+                                            proj_id=project_id,
+                                            app_id=app_id,
+                                            app_metadata=update_payload
+                                        )
+                                        
+                                        logging.info(
+                                            f"✅ Application '{app_name}' imported and script path automatically corrected to: {original_script_path}"
+                                        )
+                                        self.import_tracking["apps_imported_successfully"].append({
+                                            "name": app_name,
+                                            "runtime": required_runtime or "default",
+                                            "script": original_script_path,
+                                            "auto_corrected": True
+                                        })
+                                    except Exception as e:
+                                        # Auto-correction failed, fall back to manual instruction
+                                        logging.warning(
+                                            f"⚠️  Could not auto-correct script path for '{app_name}': {e}"
+                                        )
+                                        logging.info(
+                                            f"✅ Application '{app_name}' imported. Manual update required - change script to: {original_script_path}"
+                                        )
+                                        # Track as needing manual update
+                                        if "apps_imported_with_modifications" not in self.import_tracking:
+                                            self.import_tracking["apps_imported_with_modifications"] = []
+                                        self.import_tracking["apps_imported_with_modifications"].append({
+                                            "name": app_name,
+                                            "runtime": required_runtime,
+                                            "original_script": original_script_path,
+                                            "current_script": app_metadata["script"],
+                                            "reason": "System script path converted to relative path for migration",
+                                            "action": f"Update application script in CML UI from '{app_metadata['script']}' back to '{original_script_path}'"
+                                        })
                                 else:
                                     logging.info(f"✅ Application '{app_name}' imported successfully")
                                     self.import_tracking["apps_imported_successfully"].append({
@@ -2749,6 +2955,10 @@ class ProjectImporter(BaseWorkspaceInteractor):
                                         fallback_runtime = runtime_list["runtimes"][0].get("image_identifier")
                                         app_metadata_fallback["runtime_identifier"] = fallback_runtime
                                         
+                                        # Remove runtime_addon_identifiers to avoid validation failures
+                                        if "runtime_addon_identifiers" in app_metadata_fallback:
+                                            del app_metadata_fallback["runtime_addon_identifiers"]
+
                                         app_id = self.create_application_v2(
                                             proj_id=project_id, app_metadata=app_metadata_fallback
                                         )
